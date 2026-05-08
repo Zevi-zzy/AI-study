@@ -20,6 +20,10 @@ interface OpenAIResponse {
   }>
 }
 
+interface CompletionOptions {
+  retryMode?: boolean
+}
+
 function ensureString(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
@@ -95,20 +99,45 @@ export function normalizeGeneratedPack(raw: unknown, input: GenerateWordPackInpu
   }
 }
 
-async function requestCompletion(config: ProviderConfig, messages: OpenAIMessage[]) {
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-      messages,
-    }),
-  })
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '未知模型错误'
+}
+
+function isTimeoutError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('upstream request timeout') ||
+    message.includes('504')
+  )
+}
+
+async function requestCompletion(config: ProviderConfig, messages: OpenAIMessage[], options: CompletionOptions = {}) {
+  const controller = new AbortController()
+  const timeoutMs = options.retryMode ? 90000 : 70000
+  const timer = setTimeout(() => controller.abort(new Error('模型请求超时')), timeoutMs)
+  let response: Response
+
+  try {
+    response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: options.retryMode ? 0.2 : 0.4,
+        max_tokens: options.retryMode ? 900 : 1200,
+        response_format: { type: 'json_object' },
+        messages,
+      }),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (!response.ok) {
     const text = await response.text()
@@ -131,17 +160,25 @@ export class OpenAICompatibleProvider {
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const payload = await requestCompletion(this.config, messages)
+        const payload = await requestCompletion(this.config, messages, {
+          retryMode: attempt > 0,
+        })
         const content = payload.choices?.[0]?.message?.content || ''
         const extracted = extractJsonBlock(content)
         const parsed = JSON.parse(extracted) as unknown
         return normalizeGeneratedPack(parsed, input)
       } catch (error) {
         lastError = error
+        if (!isTimeoutError(error)) {
+          break
+        }
       }
     }
 
-    const message = lastError instanceof Error ? lastError.message : '未知模型错误'
+    const message = getErrorMessage(lastError)
+    if (isTimeoutError(lastError)) {
+      throw new Error('上游模型响应超时，请稍后重试，或把词数调到 8 个再试一次')
+    }
     throw new Error(message)
   }
 }

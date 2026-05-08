@@ -13,7 +13,7 @@ export function GeneratePage() {
   const [topic, setTopic] = useState('机场出行')
   const [scene, setScene] = useState('旅游英语')
   const [difficulty, setDifficulty] = useState('A2')
-  const [wordCount, setWordCount] = useState(10)
+  const [wordCount, setWordCount] = useState(8)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [generatedPack, setGeneratedPack] = useState<WordPack | null>(null)
@@ -84,6 +84,7 @@ export function GeneratePage() {
               onChange={(event) => setWordCount(Number(event.target.value))}
             />
           </label>
+          <p className="helper-text">默认使用 8 个词，响应更稳；如果生成较慢，系统也会自动降级重试。</p>
           <button className="button primary" disabled={loading} type="submit">
             {loading ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}
             {loading ? '正在生成词单...' : '生成词单'}

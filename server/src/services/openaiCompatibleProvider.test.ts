@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractJsonBlock, normalizeGeneratedPack } from './openaiCompatibleProvider.js'
+import { buildGenerationAttempts, extractJsonBlock, normalizeGeneratedPack } from './openaiCompatibleProvider.js'
 
 describe('extractJsonBlock', () => {
   it('可以从 fenced code block 中提取 JSON', () => {
@@ -66,5 +66,31 @@ describe('normalizeGeneratedPack', () => {
     expect(pack.topic).toBe('机场出行')
     expect(pack.cards[0].meaningZh).toBe('暂无释义')
     expect(pack.cards[0].tags).toEqual(['旅游英语'])
+  })
+})
+
+describe('buildGenerationAttempts', () => {
+  it('当词数大于 8 时会追加一个 8 词降级重试', () => {
+    const attempts = buildGenerationAttempts({
+      topic: '酒店入住',
+      scene: '旅游英语',
+      difficulty: 'A2',
+      wordCount: 10,
+    })
+
+    expect(attempts).toHaveLength(3)
+    expect(attempts[2].input.wordCount).toBe(8)
+    expect(attempts[2].retryMode).toBe(true)
+  })
+
+  it('当词数本来就是 8 时不会重复追加降级尝试', () => {
+    const attempts = buildGenerationAttempts({
+      topic: '酒店入住',
+      scene: '旅游英语',
+      difficulty: 'A2',
+      wordCount: 8,
+    })
+
+    expect(attempts).toHaveLength(2)
   })
 })

@@ -24,6 +24,11 @@ interface CompletionOptions {
   retryMode?: boolean
 }
 
+interface GenerationAttempt {
+  input: GenerateWordPackInput
+  retryMode: boolean
+}
+
 function ensureString(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
@@ -99,6 +104,25 @@ export function normalizeGeneratedPack(raw: unknown, input: GenerateWordPackInpu
   }
 }
 
+export function buildGenerationAttempts(input: GenerateWordPackInput): GenerationAttempt[] {
+  const attempts: GenerationAttempt[] = [
+    { input, retryMode: false },
+    { input, retryMode: true },
+  ]
+
+  if (input.wordCount > 8) {
+    attempts.push({
+      input: {
+        ...input,
+        wordCount: 8,
+      },
+      retryMode: true,
+    })
+  }
+
+  return attempts
+}
+
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : '未知模型错误'
 }
@@ -158,15 +182,19 @@ export class OpenAICompatibleProvider {
 
     let lastError: unknown = null
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (const attempt of buildGenerationAttempts(input)) {
       try {
-        const payload = await requestCompletion(this.config, messages, {
-          retryMode: attempt > 0,
+        const attemptMessages: OpenAIMessage[] = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: buildUserPrompt(attempt.input) },
+        ]
+        const payload = await requestCompletion(this.config, attemptMessages, {
+          retryMode: attempt.retryMode,
         })
         const content = payload.choices?.[0]?.message?.content || ''
         const extracted = extractJsonBlock(content)
         const parsed = JSON.parse(extracted) as unknown
-        return normalizeGeneratedPack(parsed, input)
+        return normalizeGeneratedPack(parsed, attempt.input)
       } catch (error) {
         lastError = error
         if (!isTimeoutError(error)) {
@@ -177,7 +205,7 @@ export class OpenAICompatibleProvider {
 
     const message = getErrorMessage(lastError)
     if (isTimeoutError(lastError)) {
-      throw new Error('上游模型响应超时，请稍后重试，或把词数调到 8 个再试一次')
+      throw new Error('上游模型响应超时，系统已自动降级重试。请稍后再试，或直接使用 8 个词生成。')
     }
     throw new Error(message)
   }

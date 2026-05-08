@@ -9,10 +9,26 @@ interface GeneratePayload {
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   const response = await fetch(input, init)
-  const payload = (await response.json()) as T & { message?: string }
+  const rawText = await response.text()
+  let payload: (T & { message?: string }) | null = null
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as T & { message?: string }
+    } catch {
+      if (!response.ok) {
+        throw new Error(rawText)
+      }
+      throw new Error('服务返回了非 JSON 响应')
+    }
+  }
 
   if (!response.ok) {
-    throw new Error(payload.message || '请求失败')
+    throw new Error(payload?.message || '请求失败')
+  }
+
+  if (!payload) {
+    throw new Error('服务返回了空响应')
   }
 
   return payload
